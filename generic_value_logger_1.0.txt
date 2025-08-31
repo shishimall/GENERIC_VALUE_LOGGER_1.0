@@ -1,0 +1,83 @@
+# generic_value_logger
+
+import streamlit as st
+import pandas as pd
+import os
+from datetime import datetime
+from io import BytesIO
+import gspread
+from google.oauth2.service_account import Credentials
+
+# データファイル名
+FILENAME = "汎用スケール記録.xlsx"
+
+# Google Sheets 認証設定
+GSHEET_SCOPE = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# ここに証明書JSONを置く
+SERVICE_ACCOUNT_FILE = "gspread_service_account.json"
+SPREADSHEET_ID = "ここにGoogleスプレッドシートID"
+
+# Google Sheets ロード
+@st.cache_resource
+def load_gsheet():
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=GSHEET_SCOPE)
+    client = gspread.authorize(creds)
+    return client.open_by_key(SPREADSHEET_ID).sheet1
+
+sheet = None
+try:
+    sheet = load_gsheet()
+except Exception as e:
+    st.warning(f"Google Sheetsの読み込に失敗しました: {e}")
+
+# ファイルの読み込み
+if os.path.exists(FILENAME):
+    df = pd.read_excel(FILENAME)
+else:
+    df = pd.DataFrame(columns=["日時", "カテゴリ", "値", "メモ"])
+
+# サイドバー
+with st.sidebar:
+    st.header(":pencil: 新規記録")
+    category = st.text_input("カテゴリ")
+    value = st.text_input("値")
+    memo = st.text_area("メモ", height=100)
+    submit = st.button("記録")
+
+    if submit and category and value:
+        new_row = {
+            "日時": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "カテゴリ": category,
+            "値": value,
+            "メモ": memo
+        }
+        df = pd.concat([pd.DataFrame([new_row]), df], ignore_index=True)
+        df.to_excel(FILENAME, index=False)
+
+        # Google Sheetsへ追加
+        if sheet:
+            try:
+                sheet.insert_row([new_row[k] for k in df.columns], index=2)
+            except Exception as e:
+                st.warning(f"Google Sheetsへの追加に失敗: {e}")
+
+        st.success("記録しました！")
+        st.rerun()
+
+# メイン表示
+st.title(":ledger: 汎用値記録")
+st.dataframe(df, use_container_width=True)
+
+# ダウンロードボタン
+output = BytesIO()
+df.to_excel(output, index=False)
+st.download_button(
+    label="📄 Excelダウンロード",
+    data=output.getvalue(),
+    file_name=FILENAME,
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
